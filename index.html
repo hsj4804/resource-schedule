@@ -68,6 +68,7 @@
     .btn-primary:hover { background-color: #1c7ed6; }
     .btn-sm { padding: 4px 8px; font-size: 11px; }
     .btn-danger { background-color: var(--danger-color); color: white; border: none; }
+    .btn-danger:hover { background-color: #e03131; }
 
     /* 타임라인 메인 테이블 */
     .timeline-wrapper {
@@ -206,10 +207,10 @@
     <div class="legend-grid" id="legendGrid"></div>
   </div>
 
-  <!-- 일정 추가 모달 -->
+  <!-- 일정 추가/수정/삭제 모달 -->
   <div class="modal-backdrop" id="allocModalBackdrop">
     <div class="modal">
-      <h3>투입 일정 설정</h3>
+      <h3 id="modalAllocTitle">투입 일정 설정</h3>
       <div class="form-group">
         <label>투입 자원(성명)</label>
         <select id="modalResource"></select>
@@ -227,6 +228,7 @@
         <input type="date" id="modalEndDate">
       </div>
       <div class="modal-actions">
+        <button class="btn btn-danger" id="btnDeleteAlloc" onclick="deleteAllocation()" style="display:none; margin-right:auto;">삭제</button>
         <button class="btn" onclick="closeAllocModal()">취소</button>
         <button class="btn btn-primary" onclick="saveAllocation()">저장</button>
       </div>
@@ -267,7 +269,7 @@
     // 1. Firebase 설정 입력 (본인의 콘솔 설정값으로 변경해주세요)
     // -----------------------------------------------------------------
     const firebaseConfig = {
-     apiKey: "AIzaSyD6rs4PK7nHKimE0vUwDsUG62Z8yMEDA28",
+    apiKey: "AIzaSyD6rs4PK7nHKimE0vUwDsUG62Z8yMEDA28",
     authDomain: "team-8d15a.firebaseapp.com",
     databaseURL: "https://team-8d15a-default-rtdb.asia-southeast1.firebasedatabase.app",
     projectId: "team-8d15a",
@@ -277,9 +279,7 @@
     measurementId: "G-B49Q9JW50P"
     };
 
-    // Firebase 초기화
     let db = null;
-    let isConnected = false;
 
     try {
       firebase.initializeApp(firebaseConfig);
@@ -293,6 +293,7 @@
     // -----------------------------------------------------------------
     let viewYear = 2026;
     let viewMonth = 8;
+    let editingAllocId = null; // 현재 수정 중인 일정 ID
 
     let resources = [
       { id: "r1", name: "김철수" },
@@ -319,16 +320,15 @@
     });
 
     // -----------------------------------------------------------------
-    // 3. Firebase 실시간 리스너 및 데이터 동기화
+    // 3. Firebase 실시간 동기화
     // -----------------------------------------------------------------
     function initRealtimeSync() {
       if (!db || firebaseConfig.apiKey === "YOUR_API_KEY") {
         document.getElementById('statusDot').style.background = '#fa5252';
-        document.getElementById('statusText').textContent = '⚠️ Firebase 설정 정보가 입력되지 않았습니다. (스코드 내 firebaseConfig 수정 필요)';
+        document.getElementById('statusText').textContent = '⚠️ Firebase 설정 정보가 입력되지 않았습니다. (코드 내 firebaseConfig 수정 필요)';
         return;
       }
 
-      // 클라우드 데이터 변경 시 실시간 수신 (누군가 변경하면 모든 접속자 자동 업데이트)
       db.ref('scheduleData').on('value', (snapshot) => {
         const data = snapshot.val();
         if (data) {
@@ -336,11 +336,9 @@
           projects = data.projects || [];
           allocations = data.allocations || [];
         } else {
-          // 데이터베이스에 기존 데이터가 없을 경우 최초 초기값 저장
           saveToFirebase();
         }
 
-        isConnected = true;
         document.getElementById('statusDot').style.background = '#40c057';
         document.getElementById('statusText').textContent = '🟢 실시간 클라우드 연결됨 (누구나 동시 편집 가능)';
         render();
@@ -350,7 +348,6 @@
       });
     }
 
-    // 클라우드로 데이터 전송
     function saveToFirebase() {
       if (db && firebaseConfig.apiKey !== "YOUR_API_KEY") {
         db.ref('scheduleData').set({
@@ -418,9 +415,9 @@
           td.className = 'cell-day';
           const currentDateStr = formatDate(viewYear, viewMonth, day);
 
-          // 빈 셀 클릭 시 자동으로 자원과 날짜 지정 모달 오픈
+          // 빈 셀 클릭 시 해당 자원/날짜로 신규 작성 모달 오픈
           td.onclick = () => {
-            openAllocationModalWithCell(res.id, currentDateStr);
+            openAllocationModal(null, res.id, currentDateStr);
           };
 
           const activeAlloc = allocations.find(a => 
@@ -447,13 +444,12 @@
                 bar.appendChild(textSpan);
               }
 
-              bar.title = `${project.name} (${activeAlloc.startDate} ~ ${activeAlloc.endDate})\n더블클릭 시 삭제`;
-              bar.ondblclick = (e) => {
-                e.stopPropagation();
-                if (confirm(`'${project.name}' 일정을 삭제하시겠습니까?`)) {
-                  allocations = allocations.filter(a => a.id !== activeAlloc.id);
-                  saveToFirebase();
-                }
+              bar.title = `${project.name} (${activeAlloc.startDate} ~ ${activeAlloc.endDate})\n클릭하여 수정 또는 삭제`;
+
+              // 기존 일정 클릭 시 [수정/삭제 모달] 오픈
+              bar.onclick = (e) => {
+                e.stopPropagation(); // 배경 셀 클릭 이벤트 중단
+                openAllocationModal(activeAlloc.id);
               };
 
               td.appendChild(bar);
@@ -508,18 +504,9 @@
     }
 
     // -----------------------------------------------------------------
-    // 5. 모달 및 CRUD 로직
+    // 5. 모달 및 일정 CRUD (추가 / 수정 / 삭제)
     // -----------------------------------------------------------------
-    function openAllocationModalWithCell(resourceId, dateStr) {
-      openAllocationModal();
-      if (resourceId) document.getElementById('modalResource').value = resourceId;
-      if (dateStr) {
-        document.getElementById('modalStartDate').value = dateStr;
-        document.getElementById('modalEndDate').value = dateStr;
-      }
-    }
-
-    function openAllocationModal() {
+    function openAllocationModal(allocId = null, resourceId = null, dateStr = null) {
       if (resources.length === 0 || projects.length === 0) {
         alert('먼저 자원(인원)과 프로젝트를 하나 이상 등록해주세요.');
         return;
@@ -531,13 +518,39 @@
       const projSelect = document.getElementById('modalProject');
       projSelect.innerHTML = projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
 
-      document.getElementById('modalStartDate').value = `${viewYear}-${String(viewMonth).padStart(2, '0')}-01`;
-      document.getElementById('modalEndDate').value = `${viewYear}-${String(viewMonth).padStart(2, '0')}-15`;
+      const deleteBtn = document.getElementById('btnDeleteAlloc');
+      const modalTitle = document.getElementById('modalAllocTitle');
+
+      if (allocId) {
+        // 기존 일정 수정 모드
+        const alloc = allocations.find(a => a.id === allocId);
+        if (!alloc) return;
+
+        editingAllocId = allocId;
+        modalTitle.textContent = "투입 일정 수정 및 삭제";
+        deleteBtn.style.display = "inline-block";
+
+        resSelect.value = alloc.resourceId;
+        projSelect.value = alloc.projectId;
+        document.getElementById('modalStartDate').value = alloc.startDate;
+        document.getElementById('modalEndDate').value = alloc.endDate;
+      } else {
+        // 신규 일정 추가 모드
+        editingAllocId = null;
+        modalTitle.textContent = "투입 일정 신규 등록";
+        deleteBtn.style.display = "none";
+
+        if (resourceId) resSelect.value = resourceId;
+        document.getElementById('modalStartDate').value = dateStr || `${viewYear}-${String(viewMonth).padStart(2, '0')}-01`;
+        document.getElementById('modalEndDate').value = dateStr || `${viewYear}-${String(viewMonth).padStart(2, '0')}-15`;
+      }
+
       document.getElementById('allocModalBackdrop').style.display = 'flex';
     }
 
     function closeAllocModal() {
       document.getElementById('allocModalBackdrop').style.display = 'none';
+      editingAllocId = null;
     }
 
     function saveAllocation() {
@@ -551,18 +564,43 @@
         return;
       }
 
-      allocations.push({
-        id: Date.now(),
-        resourceId: resId,
-        projectId: projId,
-        startDate,
-        endDate
-      });
+      if (editingAllocId) {
+        // 기존 일정 업데이트
+        const alloc = allocations.find(a => a.id === editingAllocId);
+        if (alloc) {
+          alloc.resourceId = resId;
+          alloc.projectId = projId;
+          alloc.startDate = startDate;
+          alloc.endDate = endDate;
+        }
+      } else {
+        // 신규 일정 추가
+        allocations.push({
+          id: Date.now(),
+          resourceId: resId,
+          projectId: projId,
+          startDate,
+          endDate
+        });
+      }
 
-      saveToFirebase();
+      saveToFirebase(); // Firebase에 저장 및 전원 동기화
       closeAllocModal();
     }
 
+    function deleteAllocation() {
+      if (!editingAllocId) return;
+
+      if (confirm('해당 투입 일정을 삭제하시겠습니까?')) {
+        allocations = allocations.filter(a => a.id !== editingAllocId);
+        saveToFirebase(); // Firebase에 저장 및 전원 동기화
+        closeAllocModal();
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // 6. 자원 / 프로젝트 설정 관리
+    // -----------------------------------------------------------------
     function openSettingsModal() {
       renderSettingsLists();
       document.getElementById('settingsModalBackdrop').style.display = 'flex';
