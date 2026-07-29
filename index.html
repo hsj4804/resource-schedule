@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>실시간 인원 투입 및 일정 관리 시스템</title>
+  
+  <!-- Firebase SDK Compat 버전 (CDN) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+  <style>
+    :root {
+      --bg-color: #f8f9fa;
+      --border-color: #e9ecef;
+      --header-bg: #f1f3f5;
+      --sticky-left-bg: #ffffff;
+      --primary-color: #228be6;
+      --danger-color: #fa5252;
+      --success-color: #40c057;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { padding: 20px; background-color: var(--bg-color); color: #333; }
+
+    /* 실시간 상태 바 */
+    .status-bar {
+      background: #e7f5ff;
+      border: 1px solid #a5d8ff;
+      color: #1971c2;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-indicator { width: 10px; height: 10px; border-radius: 50%; background: #40c057; display: inline-block; }
+
+    /* 상단 헤더 컨트롤 */
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .month-picker { display: flex; align-items: center; gap: 12px; }
+    .month-picker h2 { font-size: 20px; font-weight: 700; min-width: 140px; text-align: center; }
+    
+    .action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+    
+    .btn {
+      padding: 8px 14px;
+      border: 1px solid #ced4da;
+      background-color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+    .btn:hover { background-color: #e9ecef; }
+    .btn-primary { background-color: var(--primary-color); color: white; border: none; }
+    .btn-primary:hover { background-color: #1c7ed6; }
+    .btn-sm { padding: 4px 8px; font-size: 11px; }
+    .btn-danger { background-color: var(--danger-color); color: white; border: none; }
+
+    /* 타임라인 메인 테이블 */
+    .timeline-wrapper {
+      overflow-x: auto;
+      background: white;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    table { border-collapse: collapse; width: 100%; min-width: 1200px; table-layout: fixed; }
+    th, td { border: 1px solid var(--border-color); text-align: center; font-size: 12px; height: 38px; }
+    
+    .col-resource { width: 120px; min-width: 120px; position: sticky; left: 0; background: var(--sticky-left-bg); z-index: 10; border-right: 2px solid #ced4da; }
+    th.col-resource { z-index: 20; background: var(--header-bg); font-weight: 700; }
+    
+    th.day-header { background: var(--header-bg); font-weight: 600; }
+    th.day-header .day-num { font-size: 13px; }
+    th.day-header .day-name { font-size: 10px; color: #868e96; margin-top: 2px; }
+    
+    .sat { background-color: #edf2ff; color: #1c7ed6; }
+    .sun { background-color: #fff5f5; color: #f03e3e; }
+
+    /* 날짜 셀 및 일정 바 */
+    .cell-day { padding: 0; position: relative; cursor: pointer; transition: background 0.1s; }
+    .cell-day:hover { background-color: #e7f5ff !important; }
+    
+    .allocation-bar {
+      height: 28px;
+      margin: 4px 0;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      padding: 0 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      user-select: none;
+      position: relative;
+      cursor: pointer;
+    }
+    .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+    .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+    .bar-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 1; }
+
+    /* 하단 범례 */
+    .legend-container {
+      margin-top: 20px;
+      padding: 16px 20px;
+      background: white;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .legend-title { font-weight: 700; font-size: 14px; color: #495057; }
+    .legend-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .legend-card { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #f8f9fa; border-radius: 6px; font-size: 13px; }
+    .color-badge { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+    .man-days { font-size: 11px; color: #868e96; margin-left: 4px; }
+
+    /* 모달 레이어 */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal {
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      width: 440px;
+      max-width: 90%;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    }
+    .modal h3 { margin-bottom: 16px; font-size: 18px; border-bottom: 2px solid #f1f3f5; padding-bottom: 8px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #495057; }
+    .form-group select, .form-group input[type="text"], .form-group input[type="date"] {
+      width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 13px;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+    .manage-section { margin-bottom: 20px; }
+    .manage-section h4 { font-size: 14px; color: #495057; margin-bottom: 8px; }
+    .add-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .item-list { list-style: none; border: 1px solid #e9ecef; border-radius: 4px; max-height: 150px; overflow-y: auto; }
+    .item-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #e9ecef; font-size: 13px; }
+    .item-list li:last-child { border-bottom: none; }
+    .item-info { display: flex; align-items: center; gap: 8px; }
+    .item-actions { display: flex; gap: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- 실시간 동기화 정보 바 -->
+  <div class="status-bar">
+    <span class="status-indicator" id="statusDot"></span>
+    <span id="statusText">Firebase 실시간 동기화 연결 중...</span>
+  </div>
+
+  <div class="app-header">
+    <div class="month-picker">
+      <button class="btn" onclick="changeMonth(-1)">&lt; 이전달</button>
+      <h2 id="currentMonthTitle">2026년 8월</h2>
+      <button class="btn" onclick="changeMonth(1)">다음달 &gt;</button>
+    </div>
+    <div class="action-buttons">
+      <button class="btn" onclick="openSettingsModal()">⚙️ 자원/프로젝트 관리</button>
+      <button class="btn btn-primary" onclick="openAllocationModal()">+ 일정 추가</button>
+    </div>
+  </div>
+
+  <!-- 메인 데이터 타임라인 -->
+  <div class="timeline-wrapper">
+    <table id="timelineTable">
+      <thead>
+        <tr id="headerDateRow">
+          <th class="col-resource" rowspan="2">성명</th>
+        </tr>
+        <tr id="headerDayRow"></tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <!-- 범례 및 공수 -->
+  <div class="legend-container">
+    <div class="legend-title">프로젝트 범례 및 당월 투입 공수</div>
+    <div class="legend-grid" id="legendGrid"></div>
+  </div>
+
+  <!-- 일정 추가 모달 -->
+  <div class="modal-backdrop" id="allocModalBackdrop">
+    <div class="modal">
+      <h3>투입 일정 설정</h3>
+      <div class="form-group">
+        <label>투입 자원(성명)</label>
+        <select id="modalResource"></select>
+      </div>
+      <div class="form-group">
+        <label>프로젝트</label>
+        <select id="modalProject"></select>
+      </div>
+      <div class="form-group">
+        <label>시작일</label>
+        <input type="date" id="modalStartDate">
+      </div>
+      <div class="form-group">
+        <label>종료일</label>
+        <input type="date" id="modalEndDate">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeAllocModal()">취소</button>
+        <button class="btn btn-primary" onclick="saveAllocation()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 자원/프로젝트 관리 모달 -->
+  <div class="modal-backdrop" id="settingsModalBackdrop">
+    <div class="modal">
+      <h3>자원 및 프로젝트 관리</h3>
+      <div class="manage-section">
+        <h4>👤 자원(인원) 관리</h4>
+        <div class="add-row">
+          <input type="text" id="newResourceName" placeholder="새 자원 이름 입력" style="flex:1; padding: 6px; border:1px solid #ced4da; border-radius:4px; font-size:13px;">
+          <button class="btn btn-primary btn-sm" onclick="addResource()">추가</button>
+        </div>
+        <ul class="item-list" id="resourceListUI"></ul>
+      </div>
+
+      <div class="manage-section">
+        <h4>📁 프로젝트 관리</h4>
+        <div class="add-row">
+          <input type="text" id="newProjectName" placeholder="새 프로젝트명" style="flex:1; padding: 6px; border:1px solid #ced4da; border-radius:4px; font-size:13px;">
+          <input type="color" id="newProjectColor" value="#3298DC" style="width:36px; height:31px; border:none; cursor:pointer;">
+          <button class="btn btn-primary btn-sm" onclick="addProject()">추가</button>
+        </div>
+        <ul class="item-list" id="projectListUI"></ul>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="closeSettingsModal()">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------------
+    // 1. Firebase 설정 입력 (본인의 콘솔 설정값으로 변경해주세요)
+    // -----------------------------------------------------------------
+    const firebaseConfig = {
+     apiKey: "AIzaSyD6rs4PK7nHKimE0vUwDsUG62Z8yMEDA28",
+    authDomain: "team-8d15a.firebaseapp.com",
+    databaseURL: "https://team-8d15a-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "team-8d15a",
+    storageBucket: "team-8d15a.firebasestorage.app",
+    messagingSenderId: "680962074038",
+    appId: "1:680962074038:web:4bf0245530731af8368d17",
+    measurementId: "G-B49Q9JW50P"
+    };
+
+    // Firebase 초기화
+    let db = null;
+    let isConnected = false;
+
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.database();
+    } catch (err) {
+      console.error("Firebase 초기화 실패:", err);
+    }
+
+    // -----------------------------------------------------------------
+    // 2. 애플리케이션 상태 데이터
+    // -----------------------------------------------------------------
+    let viewYear = 2026;
+    let viewMonth = 8;
+
+    let resources = [
+      { id: "r1", name: "김철수" },
+      { id: "r2", name: "이영희" },
+      { id: "r3", name: "박민수" }
+    ];
+
+    let projects = [
+      { id: "p1", name: "A 프로젝트 (웹 리뉴얼)", color: "#3298DC" },
+      { id: "p2", name: "B 프로젝트 (앱 개발)", color: "#48C774" },
+      { id: "p3", name: "C 프로젝트 (유지보수)", color: "#FFDD57" }
+    ];
+
+    let allocations = [
+      { id: 1, resourceId: "r1", projectId: "p1", startDate: "2026-08-01", endDate: "2026-08-14" },
+      { id: 2, resourceId: "r2", projectId: "p2", startDate: "2026-08-05", endDate: "2026-08-25" }
+    ];
+
+    const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+
+    document.addEventListener("DOMContentLoaded", () => {
+      initRealtimeSync();
+      render();
+    });
+
+    // -----------------------------------------------------------------
+    // 3. Firebase 실시간 리스너 및 데이터 동기화
+    // -----------------------------------------------------------------
+    function initRealtimeSync() {
+      if (!db || firebaseConfig.apiKey === "YOUR_API_KEY") {
+        document.getElementById('statusDot').style.background = '#fa5252';
+        document.getElementById('statusText').textContent = '⚠️ Firebase 설정 정보가 입력되지 않았습니다. (스코드 내 firebaseConfig 수정 필요)';
+        return;
+      }
+
+      // 클라우드 데이터 변경 시 실시간 수신 (누군가 변경하면 모든 접속자 자동 업데이트)
+      db.ref('scheduleData').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          resources = data.resources || [];
+          projects = data.projects || [];
+          allocations = data.allocations || [];
+        } else {
+          // 데이터베이스에 기존 데이터가 없을 경우 최초 초기값 저장
+          saveToFirebase();
+        }
+
+        isConnected = true;
+        document.getElementById('statusDot').style.background = '#40c057';
+        document.getElementById('statusText').textContent = '🟢 실시간 클라우드 연결됨 (누구나 동시 편집 가능)';
+        render();
+      }, (error) => {
+        document.getElementById('statusDot').style.background = '#fa5252';
+        document.getElementById('statusText').textContent = '🔴 클라우드 동기화 실패: ' + error.message;
+      });
+    }
+
+    // 클라우드로 데이터 전송
+    function saveToFirebase() {
+      if (db && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+        db.ref('scheduleData').set({
+          resources: resources,
+          projects: projects,
+          allocations: allocations
+        });
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // 4. UI 랜더링 로직
+    // -----------------------------------------------------------------
+    function render() {
+      document.getElementById('currentMonthTitle').textContent = `${viewYear}년 ${viewMonth}월`;
+      const totalDays = new Date(viewYear, viewMonth, 0).getDate();
+      
+      renderHeader(totalDays);
+      renderBody(totalDays);
+      renderLegend(totalDays);
+    }
+
+    function renderHeader(totalDays) {
+      const headerDateRow = document.getElementById('headerDateRow');
+      const headerDayRow = document.getElementById('headerDayRow');
+
+      while (headerDateRow.children.length > 1) headerDateRow.removeChild(headerDateRow.lastChild);
+      headerDayRow.innerHTML = '';
+
+      for (let day = 1; day <= totalDays; day++) {
+        const dateObj = new Date(viewYear, viewMonth - 1, day);
+        const dayOfWeek = dateObj.getDay();
+
+        const thDate = document.createElement('th');
+        thDate.className = 'day-header';
+        if (dayOfWeek === 6) thDate.classList.add('sat');
+        if (dayOfWeek === 0) thDate.classList.add('sun');
+        thDate.innerHTML = `<div class="day-num">${day}</div>`;
+        headerDateRow.appendChild(thDate);
+
+        const thDay = document.createElement('th');
+        thDay.className = 'day-header';
+        if (dayOfWeek === 6) thDay.classList.add('sat');
+        if (dayOfWeek === 0) thDay.classList.add('sun');
+        thDay.innerHTML = `<div class="day-name">${dayNames[dayOfWeek]}</div>`;
+        headerDayRow.appendChild(thDay);
+      }
+    }
+
+    function renderBody(totalDays) {
+      const tableBody = document.getElementById('tableBody');
+      tableBody.innerHTML = '';
+
+      resources.forEach(res => {
+        const tr = document.createElement('tr');
+        
+        const tdName = document.createElement('td');
+        tdName.className = 'col-resource';
+        tdName.style.fontWeight = '600';
+        tdName.textContent = res.name;
+        tr.appendChild(tdName);
+
+        for (let day = 1; day <= totalDays; day++) {
+          const td = document.createElement('td');
+          td.className = 'cell-day';
+          const currentDateStr = formatDate(viewYear, viewMonth, day);
+
+          // 빈 셀 클릭 시 자동으로 자원과 날짜 지정 모달 오픈
+          td.onclick = () => {
+            openAllocationModalWithCell(res.id, currentDateStr);
+          };
+
+          const activeAlloc = allocations.find(a => 
+            a.resourceId === res.id &&
+            currentDateStr >= a.startDate &&
+            currentDateStr <= a.endDate
+          );
+
+          if (activeAlloc) {
+            const project = projects.find(p => p.id === activeAlloc.projectId);
+            if (project) {
+              const bar = document.createElement('div');
+              bar.className = 'allocation-bar';
+              bar.style.backgroundColor = project.color;
+              if (project.color === '#FFDD57') bar.style.color = '#333';
+
+              if (currentDateStr === activeAlloc.startDate) bar.classList.add('bar-start');
+              if (currentDateStr === activeAlloc.endDate) bar.classList.add('bar-end');
+
+              if (currentDateStr === activeAlloc.startDate || day === 1) {
+                const textSpan = document.createElement('span');
+                textSpan.className = 'bar-text';
+                textSpan.textContent = project.name;
+                bar.appendChild(textSpan);
+              }
+
+              bar.title = `${project.name} (${activeAlloc.startDate} ~ ${activeAlloc.endDate})\n더블클릭 시 삭제`;
+              bar.ondblclick = (e) => {
+                e.stopPropagation();
+                if (confirm(`'${project.name}' 일정을 삭제하시겠습니까?`)) {
+                  allocations = allocations.filter(a => a.id !== activeAlloc.id);
+                  saveToFirebase();
+                }
+              };
+
+              td.appendChild(bar);
+            }
+          }
+          tr.appendChild(td);
+        }
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function renderLegend(totalDays) {
+      const legendGrid = document.getElementById('legendGrid');
+      legendGrid.innerHTML = '';
+
+      const monthStart = formatDate(viewYear, viewMonth, 1);
+      const monthEnd = formatDate(viewYear, viewMonth, totalDays);
+
+      projects.forEach(p => {
+        let manDays = 0;
+        allocations.filter(a => a.projectId === p.id).forEach(a => {
+          const start = a.startDate < monthStart ? monthStart : a.startDate;
+          const end = a.endDate > monthEnd ? monthEnd : a.endDate;
+          
+          if (start <= end) {
+            const sDate = new Date(start);
+            const eDate = new Date(end);
+            manDays += (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
+          }
+        });
+
+        const card = document.createElement('div');
+        card.className = 'legend-card';
+        card.innerHTML = `
+          <div class="color-badge" style="background-color: ${p.color};"></div>
+          <span>${p.name}</span>
+          <span class="man-days">(${manDays} M/D)</span>
+        `;
+        legendGrid.appendChild(card);
+      });
+    }
+
+    function changeMonth(diff) {
+      viewMonth += diff;
+      if (viewMonth > 12) { viewYear++; viewMonth = 1; }
+      if (viewMonth < 1) { viewYear--; viewMonth = 12; }
+      render();
+    }
+
+    function formatDate(year, month, day) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+
+    // -----------------------------------------------------------------
+    // 5. 모달 및 CRUD 로직
+    // -----------------------------------------------------------------
+    function openAllocationModalWithCell(resourceId, dateStr) {
+      openAllocationModal();
+      if (resourceId) document.getElementById('modalResource').value = resourceId;
+      if (dateStr) {
+        document.getElementById('modalStartDate').value = dateStr;
+        document.getElementById('modalEndDate').value = dateStr;
+      }
+    }
+
+    function openAllocationModal() {
+      if (resources.length === 0 || projects.length === 0) {
+        alert('먼저 자원(인원)과 프로젝트를 하나 이상 등록해주세요.');
+        return;
+      }
+
+      const resSelect = document.getElementById('modalResource');
+      resSelect.innerHTML = resources.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+
+      const projSelect = document.getElementById('modalProject');
+      projSelect.innerHTML = projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+      document.getElementById('modalStartDate').value = `${viewYear}-${String(viewMonth).padStart(2, '0')}-01`;
+      document.getElementById('modalEndDate').value = `${viewYear}-${String(viewMonth).padStart(2, '0')}-15`;
+      document.getElementById('allocModalBackdrop').style.display = 'flex';
+    }
+
+    function closeAllocModal() {
+      document.getElementById('allocModalBackdrop').style.display = 'none';
+    }
+
+    function saveAllocation() {
+      const resId = document.getElementById('modalResource').value;
+      const projId = document.getElementById('modalProject').value;
+      const startDate = document.getElementById('modalStartDate').value;
+      const endDate = document.getElementById('modalEndDate').value;
+
+      if (!startDate || !endDate || startDate > endDate) {
+        alert('올바른 시작일과 종료일을 입력해주세요.');
+        return;
+      }
+
+      allocations.push({
+        id: Date.now(),
+        resourceId: resId,
+        projectId: projId,
+        startDate,
+        endDate
+      });
+
+      saveToFirebase();
+      closeAllocModal();
+    }
+
+    function openSettingsModal() {
+      renderSettingsLists();
+      document.getElementById('settingsModalBackdrop').style.display = 'flex';
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settingsModalBackdrop').style.display = 'none';
+      saveToFirebase();
+    }
+
+    function renderSettingsLists() {
+      const resUI = document.getElementById('resourceListUI');
+      resUI.innerHTML = resources.map(r => `
+        <li>
+          <span>${r.name}</span>
+          <div class="item-actions">
+            <button class="btn btn-sm" onclick="editResource('${r.id}')">수정</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteResource('${r.id}')">삭제</button>
+          </div>
+        </li>
+      `).join('');
+
+      const projUI = document.getElementById('projectListUI');
+      projUI.innerHTML = projects.map(p => `
+        <li>
+          <div class="item-info">
+            <span class="color-badge" style="background-color:${p.color}"></span>
+            <span>${p.name}</span>
+          </div>
+          <div class="item-actions">
+            <button class="btn btn-sm" onclick="editProject('${p.id}')">수정</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteProject('${p.id}')">삭제</button>
+          </div>
+        </li>
+      `).join('');
+    }
+
+    function addResource() {
+      const input = document.getElementById('newResourceName');
+      const name = input.value.trim();
+      if (!name) return alert('자원 이름을 입력하세요.');
+
+      resources.push({ id: 'r_' + Date.now(), name });
+      input.value = '';
+      saveToFirebase();
+      renderSettingsLists();
+    }
+
+    function editResource(id) {
+      const res = resources.find(r => r.id === id);
+      if (!res) return;
+      const newName = prompt('수정할 자원의 이름을 입력하세요:', res.name);
+      if (newName && newName.trim() !== '') {
+        res.name = newName.trim();
+        saveToFirebase();
+        renderSettingsLists();
+      }
+    }
+
+    function deleteResource(id) {
+      if (confirm('이 자원을 삭제하시겠습니까? 관련된 투입 일정도 함께 삭제됩니다.')) {
+        resources = resources.filter(r => r.id !== id);
+        allocations = allocations.filter(a => a.resourceId !== id);
+        saveToFirebase();
+        renderSettingsLists();
+      }
+    }
+
+    function addProject() {
+      const nameInput = document.getElementById('newProjectName');
+      const colorInput = document.getElementById('newProjectColor');
+      const name = nameInput.value.trim();
+      if (!name) return alert('프로젝트명을 입력하세요.');
+
+      projects.push({ id: 'p_' + Date.now(), name, color: colorInput.value });
+      nameInput.value = '';
+      saveToFirebase();
+      renderSettingsLists();
+    }
+
+    function editProject(id) {
+      const proj = projects.find(p => p.id === id);
+      if (!proj) return;
+      
+      const newName = prompt('수정할 프로젝트명을 입력하세요:', proj.name);
+      if (newName && newName.trim() !== '') {
+        proj.name = newName.trim();
+        saveToFirebase();
+        renderSettingsLists();
+      }
+    }
+
+    function deleteProject(id) {
+      if (confirm('이 프로젝트를 삭제하시겠습니까? 관련된 투입 일정도 함께 삭제됩니다.')) {
+        projects = projects.filter(p => p.id !== id);
+        allocations = allocations.filter(a => a.projectId !== id);
+        saveToFirebase();
+        renderSettingsLists();
+      }
+    }
+  </script>
+</body>
+</html>
