@@ -18,6 +18,11 @@
       --primary-color: #228be6;
       --danger-color: #fa5252;
       --success-color: #40c057;
+      
+      /* 당일 하이라이트 색상 */
+      --today-bg: #e6fcf5;
+      --today-header-bg: #c3fae8;
+      --today-border: #20c997;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -63,12 +68,13 @@
       font-size: 13px;
       transition: all 0.2s;
     }
-    .btn:hover { background-color: #e9ecef; }
+    .btn:hover:not(:disabled) { background-color: #e9ecef; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-primary { background-color: var(--primary-color); color: white; border: none; }
-    .btn-primary:hover { background-color: #1c7ed6; }
+    .btn-primary:hover:not(:disabled) { background-color: #1c7ed6; }
     .btn-sm { padding: 4px 8px; font-size: 11px; }
     .btn-danger { background-color: var(--danger-color); color: white; border: none; }
-    .btn-danger:hover { background-color: #e03131; }
+    .btn-danger:hover:not(:disabled) { background-color: #e03131; }
 
     /* 타임라인 메인 테이블 */
     .timeline-wrapper {
@@ -90,6 +96,20 @@
     
     .sat { background-color: #edf2ff; color: #1c7ed6; }
     .sun { background-color: #fff5f5; color: #f03e3e; }
+
+    /* 🌟 오늘(당일) 열 하이라이트 스타일 */
+    th.today-col {
+      background-color: var(--today-header-bg) !important;
+      color: #0ca678 !important;
+      font-weight: 700;
+      border-left: 2px solid var(--today-border) !important;
+      border-right: 2px solid var(--today-border) !important;
+    }
+    td.today-col {
+      background-color: var(--today-bg) !important;
+      border-left: 2px solid var(--today-border) !important;
+      border-right: 2px solid var(--today-border) !important;
+    }
 
     /* 날짜 셀 및 일정 바 */
     .cell-day { padding: 0; position: relative; cursor: pointer; transition: background 0.1s; }
@@ -144,7 +164,7 @@
       background: white;
       padding: 24px;
       border-radius: 8px;
-      width: 440px;
+      width: 460px;
       max-width: 90%;
       max-height: 85vh;
       overflow-y: auto;
@@ -161,7 +181,7 @@
     .manage-section { margin-bottom: 20px; }
     .manage-section h4 { font-size: 14px; color: #495057; margin-bottom: 8px; }
     .add-row { display: flex; gap: 8px; margin-bottom: 10px; }
-    .item-list { list-style: none; border: 1px solid #e9ecef; border-radius: 4px; max-height: 150px; overflow-y: auto; }
+    .item-list { list-style: none; border: 1px solid #e9ecef; border-radius: 4px; max-height: 180px; overflow-y: auto; }
     .item-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #e9ecef; font-size: 13px; }
     .item-list li:last-child { border-bottom: none; }
     .item-info { display: flex; align-items: center; gap: 8px; }
@@ -240,7 +260,7 @@
     <div class="modal">
       <h3>자원 및 프로젝트 관리</h3>
       <div class="manage-section">
-        <h4>👤 자원(인원) 관리</h4>
+        <h4>👤 자원(인원) 관리 (▲▼ 버튼으로 순서 변경)</h4>
         <div class="add-row">
           <input type="text" id="newResourceName" placeholder="새 자원 이름 입력" style="flex:1; padding: 6px; border:1px solid #ced4da; border-radius:4px; font-size:13px;">
           <button class="btn btn-primary btn-sm" onclick="addResource()">추가</button>
@@ -266,17 +286,16 @@
 
   <script>
     // -----------------------------------------------------------------
-    // 1. Firebase 설정 입력 (본인의 콘솔 설정값으로 변경해주세요)
+    // 1. Firebase 설정 입력
     // -----------------------------------------------------------------
     const firebaseConfig = {
-    apiKey: "AIzaSyD6rs4PK7nHKimE0vUwDsUG62Z8yMEDA28",
-    authDomain: "team-8d15a.firebaseapp.com",
-    databaseURL: "https://team-8d15a-default-rtdb.asia-southeast1.firebasedatabase.app",
-    projectId: "team-8d15a",
-    storageBucket: "team-8d15a.firebasestorage.app",
-    messagingSenderId: "680962074038",
-    appId: "1:680962074038:web:4bf0245530731af8368d17",
-    measurementId: "G-B49Q9JW50P"
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
     };
 
     let db = null;
@@ -291,9 +310,16 @@
     // -----------------------------------------------------------------
     // 2. 애플리케이션 상태 데이터
     // -----------------------------------------------------------------
-    let viewYear = 2026;
-    let viewMonth = 8;
-    let editingAllocId = null; // 현재 수정 중인 일정 ID
+    // 오늘 날짜 객체
+    const todayObj = new Date();
+    const todayYear = todayObj.getFullYear();
+    const todayMonth = todayObj.getMonth() + 1;
+    const todayDay = todayObj.getDate();
+
+    // 기본 보기는 오늘 날짜 기준
+    let viewYear = todayYear;
+    let viewMonth = todayMonth;
+    let editingAllocId = null;
 
     let resources = [
       { id: "r1", name: "김철수" },
@@ -381,10 +407,15 @@
         const dateObj = new Date(viewYear, viewMonth - 1, day);
         const dayOfWeek = dateObj.getDay();
 
+        // 오늘 여부 확인
+        const isToday = (viewYear === todayYear && viewMonth === todayMonth && day === todayDay);
+
         const thDate = document.createElement('th');
         thDate.className = 'day-header';
         if (dayOfWeek === 6) thDate.classList.add('sat');
         if (dayOfWeek === 0) thDate.classList.add('sun');
+        if (isToday) thDate.classList.add('today-col');
+
         thDate.innerHTML = `<div class="day-num">${day}</div>`;
         headerDateRow.appendChild(thDate);
 
@@ -392,6 +423,8 @@
         thDay.className = 'day-header';
         if (dayOfWeek === 6) thDay.classList.add('sat');
         if (dayOfWeek === 0) thDay.classList.add('sun');
+        if (isToday) thDay.classList.add('today-col');
+
         thDay.innerHTML = `<div class="day-name">${dayNames[dayOfWeek]}</div>`;
         headerDayRow.appendChild(thDay);
       }
@@ -414,6 +447,10 @@
           const td = document.createElement('td');
           td.className = 'cell-day';
           const currentDateStr = formatDate(viewYear, viewMonth, day);
+
+          // 오늘 여부 확인
+          const isToday = (viewYear === todayYear && viewMonth === todayMonth && day === todayDay);
+          if (isToday) td.classList.add('today-col');
 
           // 빈 셀 클릭 시 해당 자원/날짜로 신규 작성 모달 오픈
           td.onclick = () => {
@@ -446,9 +483,8 @@
 
               bar.title = `${project.name} (${activeAlloc.startDate} ~ ${activeAlloc.endDate})\n클릭하여 수정 또는 삭제`;
 
-              // 기존 일정 클릭 시 [수정/삭제 모달] 오픈
               bar.onclick = (e) => {
-                e.stopPropagation(); // 배경 셀 클릭 이벤트 중단
+                e.stopPropagation();
                 openAllocationModal(activeAlloc.id);
               };
 
@@ -504,7 +540,7 @@
     }
 
     // -----------------------------------------------------------------
-    // 5. 모달 및 일정 CRUD (추가 / 수정 / 삭제)
+    // 5. 모달 및 일정 CRUD
     // -----------------------------------------------------------------
     function openAllocationModal(allocId = null, resourceId = null, dateStr = null) {
       if (resources.length === 0 || projects.length === 0) {
@@ -522,7 +558,6 @@
       const modalTitle = document.getElementById('modalAllocTitle');
 
       if (allocId) {
-        // 기존 일정 수정 모드
         const alloc = allocations.find(a => a.id === allocId);
         if (!alloc) return;
 
@@ -535,7 +570,6 @@
         document.getElementById('modalStartDate').value = alloc.startDate;
         document.getElementById('modalEndDate').value = alloc.endDate;
       } else {
-        // 신규 일정 추가 모드
         editingAllocId = null;
         modalTitle.textContent = "투입 일정 신규 등록";
         deleteBtn.style.display = "none";
@@ -565,7 +599,6 @@
       }
 
       if (editingAllocId) {
-        // 기존 일정 업데이트
         const alloc = allocations.find(a => a.id === editingAllocId);
         if (alloc) {
           alloc.resourceId = resId;
@@ -574,7 +607,6 @@
           alloc.endDate = endDate;
         }
       } else {
-        // 신규 일정 추가
         allocations.push({
           id: Date.now(),
           resourceId: resId,
@@ -584,7 +616,7 @@
         });
       }
 
-      saveToFirebase(); // Firebase에 저장 및 전원 동기화
+      saveToFirebase();
       closeAllocModal();
     }
 
@@ -593,13 +625,13 @@
 
       if (confirm('해당 투입 일정을 삭제하시겠습니까?')) {
         allocations = allocations.filter(a => a.id !== editingAllocId);
-        saveToFirebase(); // Firebase에 저장 및 전원 동기화
+        saveToFirebase();
         closeAllocModal();
       }
     }
 
     // -----------------------------------------------------------------
-    // 6. 자원 / 프로젝트 설정 관리
+    // 6. 자원 / 프로젝트 설정 관리 & 순서 변경
     // -----------------------------------------------------------------
     function openSettingsModal() {
       renderSettingsLists();
@@ -613,10 +645,12 @@
 
     function renderSettingsLists() {
       const resUI = document.getElementById('resourceListUI');
-      resUI.innerHTML = resources.map(r => `
+      resUI.innerHTML = resources.map((r, index) => `
         <li>
           <span>${r.name}</span>
           <div class="item-actions">
+            <button class="btn btn-sm" onclick="moveResource(${index}, -1)" ${index === 0 ? 'disabled' : ''}>▲</button>
+            <button class="btn btn-sm" onclick="moveResource(${index}, 1)" ${index === resources.length - 1 ? 'disabled' : ''}>▼</button>
             <button class="btn btn-sm" onclick="editResource('${r.id}')">수정</button>
             <button class="btn btn-sm btn-danger" onclick="deleteResource('${r.id}')">삭제</button>
           </div>
@@ -636,6 +670,20 @@
           </div>
         </li>
       `).join('');
+    }
+
+    // 자원(인원) 위/아래 순서 조정 함수
+    function moveResource(index, direction) {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= resources.length) return;
+
+      // 배열 순서 스왑(Swap)
+      const temp = resources[index];
+      resources[index] = resources[targetIndex];
+      resources[targetIndex] = temp;
+
+      saveToFirebase();
+      renderSettingsLists();
     }
 
     function addResource() {
